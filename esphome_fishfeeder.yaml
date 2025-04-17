@@ -1,0 +1,255 @@
+#Funktionert: Stand 2025-03-30
+
+substitutions:
+  name: fishfeeder
+  friendly_name: Fish feeder
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  min_version: 2024.6.0
+  name_add_mac_suffix: true
+  project:
+    name: esphome.web
+    version: '1.0'
+
+esp32:
+  board: esp32cam
+
+wifi:
+  networks:
+    - ssid: "MyWiFi"
+      password: "MySecretPassword!"
+
+  ap:
+    ssid: "${friendly_name} Setup"
+    ap_timeout: 5min  # Optional: AP deaktiviert sich nach 5 Minuten
+
+captive_portal:
+
+improv_serial:  # Erlaubt Konfiguration über USB
+
+# Automatisches OTA + Bluetooth-Konfiguration
+ota:
+  - platform: esphome
+
+
+# Enable logging
+logger:
+#  level: DEBUG
+
+# Enable Home Assistant API
+api:
+  services:  # change camera parameters on-the-fly
+    - service: camera_set_param
+      variables:
+        name: string
+        value: int
+      then:
+        - lambda: |-
+            bool state_return = false;
+            if (("contrast" == name)          && (value >= -2) && (value <= 2)) { id(espcam).set_contrast(value); state_return = true; }
+            if (("brightness" == name)        && (value >= -2) && (value <= 2)) { id(espcam).set_brightness(value); state_return = true; }
+            if (("saturation" == name)        && (value >= -2) && (value <= 2)) { id(espcam).set_saturation(value); state_return = true; }
+            if (("special_effect" == name)    && (value >= 0U) && (value <= 6U)) { id(espcam).set_special_effect((esphome::esp32_camera::ESP32SpecialEffect)value); state_return = true; }
+            if (("aec_mode" == name)          && (value >= 0U) && (value <= 1U)) { id(espcam).set_aec_mode((esphome::esp32_camera::ESP32GainControlMode)value); state_return = true; }
+            if (("aec2" == name)              && (value >= 0U) && (value <= 1U)) { id(espcam).set_aec2(value); state_return = true; }
+            if (("ae_level" == name)          && (value >= -2) && (value <= 2)) { id(espcam).set_ae_level(value); state_return = true; }
+            if (("aec_value" == name)         && (value >= 0U) && (value <= 1200U)) { id(espcam).set_aec_value(value); state_return = true; }
+            if (("agc_mode" == name)          && (value >= 0U) && (value <= 1U)) { id(espcam).set_agc_mode((esphome::esp32_camera::ESP32GainControlMode)value); state_return = true; }
+            if (("agc_value" == name)         && (value >= 0U) && (value <= 30U)) { id(espcam).set_agc_value(value); state_return = true; }
+            if (("agc_gain_ceiling" == name)  && (value >= 0U) && (value <= 6U)) { id(espcam).set_agc_gain_ceiling((esphome::esp32_camera::ESP32AgcGainCeiling)value); state_return = true; }
+            if (("wb_mode" == name)           && (value >= 0U) && (value <= 4U)) { id(espcam).set_wb_mode((esphome::esp32_camera::ESP32WhiteBalanceMode)value); state_return = true; }
+            if (("test_pattern" == name)      && (value >= 0U) && (value <= 1U)) { id(espcam).set_test_pattern(value); state_return = true; }
+            if (("vertical_flip" == name)     && (value >= 0U) && (value <= 1U)) { id(espcam).set_vertical_flip(value); state_return = true; }
+            if (("horizontal_mirror" == name)     && (value >= 0U) && (value <= 1U)) { id(espcam).set_horizontal_mirror(value); state_return = true; }
+            if (true == state_return) {
+              id(espcam).update_camera_parameters();
+            }
+            else {
+              ESP_LOGW("esp32_camera_set_param", "Error in name or data range");
+            }
+
+# Confugure the hardware pins
+output:
+  - platform: gpio
+    pin: GPIO4
+    id: light_pin
+
+  - platform: ledc
+    id: feed_servo_output
+    pin: GPIO13
+    frequency: 50 Hz
+
+light:
+  - platform: binary
+    output: light_pin
+    name: camera light
+
+# ================== Servo für Förderschnecke ==================
+servo:
+  - id: feed_servo
+    output: feed_servo_output
+    min_level: 12%
+    max_level: 3%
+
+esp32_camera:
+  id: espcam
+  name: camera
+  external_clock:
+    pin: GPIO0
+    frequency: 10MHz
+  i2c_pins:
+    sda: GPIO26
+    scl: GPIO27
+  data_pins: [GPIO5, GPIO18, GPIO19, GPIO21, GPIO36, GPIO39, GPIO34, GPIO35]
+  vsync_pin: GPIO25
+  href_pin: GPIO23
+  pixel_clock_pin: GPIO22
+  power_down_pin: GPIO32
+  resolution: 800x600
+  jpeg_quality: 10  # max. 63
+  max_framerate: 5.0fps
+  idle_framerate: 0.2fps
+  vertical_flip: true
+  horizontal_mirror: false
+  brightness: 2 # -2 to 2
+  contrast: 1 # -2 to 2
+  special_effect: none
+  # exposure settings
+  aec_mode: auto
+  aec2: false
+  ae_level: 0
+  aec_value: 300
+  # gain settings
+  agc_mode: auto
+  agc_gain_ceiling: 2x
+  agc_value: 0
+  # white balance setting
+  wb_mode: auto
+
+
+# ================== Home Assistant Steuerung ==================
+
+number:
+
+   # Servo control between -100% (linkslauf) <-> 0 <-> 100% (rechtslauf)
+  - platform: template
+    name: Servo Control
+    id: servo_control
+    min_value: -100
+    initial_value: 0
+    max_value: 100
+    step: 1
+    optimistic: true
+    set_action:
+      then:
+        - servo.write:
+            id: feed_servo
+            level: !lambda 'return x / 100.0;'
+  
+  # Dauer eines Futterimpulses
+  - platform: template
+    name: "Impulsdauer (ms)"
+    id: feed_pulse_duration
+    min_value: 100
+    max_value: 30000
+    initial_value: 500
+    step: 100
+    optimistic: true
+    restore_value: true
+
+  # Impulsgeschwindigkeit
+  - platform: template
+    name: "Impulse Geschwindigkeit"
+    id: servo_speed
+    min_value: 10
+    max_value: 100
+    initial_value: 25 
+    step: 1
+    optimistic: true
+    restore_value: true
+
+
+# Knöpfe zum bedienen
+button:
+
+  # Einmal Füttern
+  - platform: template
+    name: "Feed now"
+    on_press:
+      then:
+        - script.execute:
+            id: feed
+            pulses: 1
+
+  # Festgefressenes losrütteln
+  - platform: template
+    name: "Unclog device"
+    on_press:
+      then:
+        - script.execute: unclog
+
+  # Servo abschalten
+  - platform: template
+    name: "Stop servo"
+    on_press:
+      then:
+        - servo.detach: feed_servo
+        - lambda: 'id(servo_control) = 0;'
+
+  # Neu starten
+  - platform: restart
+    name: "Restart device"
+
+script:
+
+  # Festgefressenes losruetteln
+  - id: unclog
+    then:
+      - lambda: |-
+          ESP_LOGI("feed", "Try to unclog the auger");
+      - repeat:
+          count: 10
+          then:
+            - servo.write:
+                id: feed_servo
+                level: -30%     # etwas nach Links
+            - delay: 150ms
+            - servo.write:
+                id: feed_servo
+                level: 30%      # etwas nach Rechts
+            - delay: 150ms
+      - servo.detach: feed_servo
+
+  # Fische einmal füttern
+  - id: feed
+    parameters:
+      pulses: int
+    then:
+      - lambda: |-
+          ESP_LOGI("feed", "Fütterung mit %d Impulsen", pulses);
+
+      - repeat:
+          count: !lambda 'return pulses;'
+          then:
+            - lambda: |-
+                id(feed_servo).write(id(servo_speed).state / 100.0);
+            - delay: !lambda 'return (uint32_t) id(feed_pulse_duration).state;'
+            - lambda: |-
+                id(feed_servo).write(0.0);
+            - delay: 200ms
+
+      - servo.detach: feed_servo
+
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+
+binary_sensor:
+  - platform: status
+    name: Status
+
+sensor:
+  - platform: wifi_signal
+    name: WiFi Signal
