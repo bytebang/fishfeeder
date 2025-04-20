@@ -16,8 +16,8 @@ esp32:
 
 wifi:
   networks:
-    - ssid: "YourWiFi"
-      password: "YourPassword"
+    - ssid: "xxx"
+      password: "yyy"
 
   ap:
     ssid: "${friendly_name} Setup"
@@ -144,7 +144,7 @@ globals:
 number:
    # Servo control between -100% (linkslauf) <-> 0 <-> 100% (rechtslauf)
   - platform: template
-    name: Servo Control
+    name: "Servo Control"
     id: servo_control
     entity_category: diagnostic
     min_value: -100
@@ -160,11 +160,12 @@ number:
   
   # Dauer eines Futterimpulses
   - platform: template
-    name: "Impulsdauer (ms)"
+    name: "Impulse Duration"
     id: feed_pulse_duration
     entity_category: config
     min_value: 100
     max_value: 30000
+    unit_of_measurement: "ms"
     initial_value: 500
     step: 100
     optimistic: true
@@ -172,7 +173,7 @@ number:
 
   # Impulsgeschwindigkeit
   - platform: template
-    name: "Impulse Geschwindigkeit"
+    name: "Impulse Speed"
     id: servo_speed
     entity_category: config
     min_value: 10
