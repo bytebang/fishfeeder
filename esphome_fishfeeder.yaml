@@ -67,6 +67,45 @@ api:
             else {
               ESP_LOGW("esp32_camera_set_param", "Error in name or data range");
             }
+  
+    - service: feed_grams # Feed x grams 
+      variables:
+        weight: float
+      then:
+        - lambda: |-
+            const uint32_t MAX_FEED_DURATION_MS = 100*1000;  // Sicherheitsgrenze
+
+            float grams_per_pulse = id(weight_per_pulse).state;
+            float pulse_duration_ms = id(feed_pulse_duration).state;
+            if (grams_per_pulse <= 0.0f || pulse_duration_ms <= 0.0f) {
+              ESP_LOGW("feed", "weight_per_pulse or feed_pulse_duration is not set!");
+              return;
+            }
+
+            float pulses_needed = weight / grams_per_pulse;
+            if (pulses_needed <= 0.0f) {
+              ESP_LOGW("feed", "Calculated pulses is zero, aborting feed.");
+              return;
+            }
+
+            uint32_t total_duration = (uint32_t)(pulses_needed * pulse_duration_ms);
+            if (total_duration > MAX_FEED_DURATION_MS) {
+              ESP_LOGW("feed", "Feed duration too long (%d ms). Aborting for safety.", total_duration);
+              return;
+            }
+
+            ESP_LOGI("feed", "Füttere %.1f g (%.2f Pulsäquivalente, Dauer %d ms)", weight, pulses_needed, total_duration);
+
+            // Servo anwerfen
+            id(feed_servo).write(id(servo_speed).state / 100.0);
+
+            // Zeit merken wann er stoppen soll
+            id(feed_end_time) = millis() + total_duration;
+            id(feed_active) = true;
+
+            // Zähler direkt aktualisieren
+            id(total_pulses) += (int) roundf(pulses_needed);
+            id(total_weight) += weight;
 
 # Confugure the hardware pins
 output:
@@ -139,6 +178,15 @@ globals:
     restore_value: true
     initial_value: '0.0'
 
+  - id: feed_active
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+
+  - id: feed_end_time
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
 # ================== Home Assistant Steuerung ==================
 
 number:
@@ -146,7 +194,7 @@ number:
   - platform: template
     name: "Servo Control"
     id: servo_control
-    entity_category: diagnostic
+    entity_category: config
     min_value: -100
     initial_value: 0
     max_value: 100
@@ -301,7 +349,7 @@ script:
       pulses: int
     then:
       - lambda: |-
-          ESP_LOGI("feed", "Fütterung mit %d Impulsen", pulses);
+          ESP_LOGI("feed", "Feeding with %d pulses", pulses);
 
       - repeat:
           count: !lambda 'return pulses;'
@@ -344,3 +392,17 @@ text_sensor:
     name: "Hostname"
     lambda: |-
       return { App.get_name() };
+
+# Stop the servo afrt the feeding has ended
+# (This is needed because ESPHome is not multithreaded)
+interval:
+  - interval: 100ms
+    then:
+      - lambda: |-
+          if (id(feed_active)) {
+            if ((int32_t)(millis() - id(feed_end_time)) >= 0) {
+              ESP_LOGI("feed", "Finished feeding, Stopping servo.");
+              id(feed_servo).write(0.0);
+              id(feed_active) = false;
+            }
+          }
