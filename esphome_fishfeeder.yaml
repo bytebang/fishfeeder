@@ -1,5 +1,3 @@
-#Funktionert: Stand 2025-03-30
-
 substitutions:
   name: fishfeeder
   friendly_name: Fish feeder
@@ -18,8 +16,8 @@ esp32:
 
 wifi:
   networks:
-    - ssid: "MyWiFi"
-      password: "MySecretPassword!"
+    - ssid: "YourWiFi"
+      password: "YourPassword"
 
   ap:
     ssid: "${friendly_name} Setup"
@@ -128,15 +126,27 @@ esp32_camera:
   # white balance setting
   wb_mode: auto
 
+## Globale Variablen
+
+globals:
+  - id: total_pulses
+    type: int
+    restore_value: true
+    initial_value: '0'
+
+  - id: total_weight
+    type: float
+    restore_value: true
+    initial_value: '0.0'
 
 # ================== Home Assistant Steuerung ==================
 
 number:
-
    # Servo control between -100% (linkslauf) <-> 0 <-> 100% (rechtslauf)
   - platform: template
     name: Servo Control
     id: servo_control
+    entity_category: diagnostic
     min_value: -100
     initial_value: 0
     max_value: 100
@@ -152,6 +162,7 @@ number:
   - platform: template
     name: "Impulsdauer (ms)"
     id: feed_pulse_duration
+    entity_category: config
     min_value: 100
     max_value: 30000
     initial_value: 500
@@ -163,6 +174,7 @@ number:
   - platform: template
     name: "Impulse Geschwindigkeit"
     id: servo_speed
+    entity_category: config
     min_value: 10
     max_value: 100
     initial_value: 25 
@@ -171,9 +183,57 @@ number:
     restore_value: true
 
 
+## Configuration variables
+  - platform: template
+    name: "Total Pulses"
+    id: total_pulses_display
+    lambda: |-
+      return id(total_pulses);
+    set_action:
+      then:
+        - lambda: |-
+            id(total_pulses) = x;  
+    update_interval: 60s
+    min_value: 0
+    max_value: 999999
+    step: 1
+    mode: box
+    entity_category: config
+    icon: mdi:gauge
+
+
+  - platform: template
+    name: "Total Weight"
+    id: total_weight_display
+    lambda: |-
+      return id(total_weight);
+    set_action:
+      then:
+        - lambda: |-
+            id(total_weight) = x; 
+    update_interval: 60s
+    unit_of_measurement: "g"
+    min_value: 0
+    max_value: 999999
+    step: 1
+    mode: box
+    entity_category: config
+    icon: mdi:scale
+
+  - platform: template
+    name: "Weight per Pulse"
+    id: weight_per_pulse
+    unit_of_measurement: "g"
+    min_value: 0
+    max_value: 100
+    step: 0.1
+    entity_category: config
+    icon: mdi:gauge
+    restore_value: True
+    optimistic: True
+
 # Knöpfe zum bedienen
 button:
-
   # Einmal Füttern
   - platform: template
     name: "Feed now"
@@ -197,10 +257,22 @@ button:
       then:
         - servo.detach: feed_servo
         - lambda: 'id(servo_control) = 0;'
+        - lambda: 'id(servo_control).publish_state(0);'
 
   # Neu starten
   - platform: restart
     name: "Restart device"
+
+  # Zähler zurücksetzen
+  - platform: template
+    name: "Reset Counters"
+    id: reset_counters
+    entity_category: config
+    on_press:
+      then:
+        - lambda: |-
+            id(total_pulses) = 0;
+            id(total_weight) = 0.0;
 
 script:
 
@@ -239,6 +311,9 @@ script:
             - lambda: |-
                 id(feed_servo).write(0.0);
             - delay: 200ms
+            - lambda: |-
+                id(total_pulses) += 1;
+                id(total_weight) += id(weight_per_pulse).state;
 
       - servo.detach: feed_servo
 
@@ -253,3 +328,18 @@ binary_sensor:
 sensor:
   - platform: wifi_signal
     name: WiFi Signal
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+
+  - platform: wifi_info
+    mac_address:
+      name: "MAC Address"
+
+  - platform: template
+    entity_category: diagnostic
+    name: "Hostname"
+    lambda: |-
+      return { App.get_name() };
